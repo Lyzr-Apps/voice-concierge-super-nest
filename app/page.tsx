@@ -291,6 +291,8 @@ export default function Home() {
   const callTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const userIdRef = useRef<string>('');
   const sessionIdRef = useRef<string>('');
+  const callStatusRef = useRef<CallStatus>('idle');
+  const isEndingRef = useRef(false);
 
   // Auto-scroll transcript
   useEffect(() => {
@@ -340,11 +342,35 @@ export default function Home() {
     };
   }, [callStatus]);
 
+  // Keep callStatusRef in sync with callStatus state
+  const updateCallStatus = useCallback((status: CallStatus) => {
+    callStatusRef.current = status;
+    setCallStatus(status);
+  }, []);
+
   const formatDuration = (seconds: number): string => {
     const m = Math.floor(seconds / 60).toString().padStart(2, '0');
     const s = (seconds % 60).toString().padStart(2, '0');
     return `${m}:${s}`;
   };
+
+  // Cleanup helper for media resources
+  const cleanupMedia = useCallback(() => {
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+      try { mediaRecorderRef.current.stop(); } catch { /* ignore */ }
+    }
+    mediaRecorderRef.current = null;
+
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+  }, []);
 
   const playAudioChunk = useCallback(async (audioData: ArrayBuffer) => {
     try {
@@ -374,11 +400,15 @@ export default function Home() {
   }, []);
 
   const startCall = useCallback(async () => {
+    // Guard against double-start
+    if (callStatusRef.current !== 'idle') return;
+
     setErrorMessage(null);
-    setCallStatus('connecting');
+    updateCallStatus('connecting');
     setTranscript([]);
     setBookingSummary(null);
     setCallDuration(0);
+    isEndingRef.current = false;
 
     // Generate session identifiers
     userIdRef.current = generateUUID();
@@ -391,7 +421,7 @@ export default function Home() {
       streamRef.current = stream;
     } catch {
       setErrorMessage('Microphone access is required for voice calls. Please grant permission and try again.');
-      setCallStatus('idle');
+      updateCallStatus('idle');
       return;
     }
 
@@ -404,24 +434,44 @@ export default function Home() {
 
     // Connect WebSocket
     const wsUrl = `${LYZR_VOICE_WS}?agent_id=${AGENT_ID}&user_id=${userIdRef.current}&session_id=${sessionIdRef.current}`;
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
 
+    let ws: WebSocket;
+    try {
+      ws = new WebSocket(wsUrl);
+    } catch {
+      setErrorMessage('Unable to establish voice connection. Please try again.');
+      cleanupMedia();
+      updateCallStatus('idle');
+      return;
+    }
+
+    wsRef.current = ws;
     ws.binaryType = 'arraybuffer';
 
+    // Connection timeout - if not open within 15 seconds, fail gracefully
+    const connectionTimeout = setTimeout(() => {
+      if (ws.readyState !== WebSocket.OPEN) {
+        ws.close();
+        cleanupMedia();
+        setErrorMessage('Connection timed out. Please check your network and try again.');
+        updateCallStatus('idle');
+      }
+    }, 15000);
+
     ws.onopen = () => {
-      setCallStatus('active');
+      clearTimeout(connectionTimeout);
+      updateCallStatus('active');
       setErrorMessage(null);
 
       // Start MediaRecorder
       try {
-        const mediaRecorder = new MediaRecorder(stream, {
-          mimeType: MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-            ? 'audio/webm;codecs=opus'
-            : MediaRecorder.isTypeSupported('audio/webm')
-              ? 'audio/webm'
-              : 'audio/mp4',
-        });
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : MediaRecorder.isTypeSupported('audio/webm')
+            ? 'audio/webm'
+            : 'audio/mp4';
+
+        const mediaRecorder = new MediaRecorder(stream, { mimeType });
         mediaRecorderRef.current = mediaRecorder;
 
         mediaRecorder.ondataavailable = (event) => {
@@ -434,7 +484,8 @@ export default function Home() {
       } catch {
         setErrorMessage('Unable to start audio recording. Please try a different browser.');
         ws.close();
-        setCallStatus('idle');
+        cleanupMedia();
+        updateCallStatus('idle');
       }
     };
 
@@ -466,7 +517,6 @@ export default function Home() {
               confirmationNumber: parsed?.confirmationNumber ?? parsed?.confirmation_number ?? '',
             });
           } else if (parsed?.type === 'audio' && parsed?.audio) {
-            // Handle base64 audio
             try {
               const binaryStr = atob(parsed.audio);
               const bytes = new Uint8Array(binaryStr.length);
@@ -481,55 +531,50 @@ export default function Home() {
             setErrorMessage(parsed?.message ?? 'An error occurred during the call.');
           }
         } catch {
-          // Non-JSON text message, ignore
+          // Non-JSON text message, treat as plain transcript from agent
+          const text = event.data.trim();
+          if (text.length > 0) {
+            setTranscript((prev) => [
+              ...prev,
+              {
+                id: generateUUID(),
+                speaker: 'concierge',
+                text,
+                timestamp: getTimestamp(),
+              },
+            ]);
+          }
         }
       }
     };
 
     ws.onerror = () => {
-      setErrorMessage('Connection error. Please check your internet connection and try again.');
-      setCallStatus('idle');
+      clearTimeout(connectionTimeout);
+      // Only show error if we haven't already initiated ending
+      if (!isEndingRef.current) {
+        setErrorMessage('Connection error. Please check your internet connection and try again.');
+      }
+      // Don't set idle here -- onclose always fires after onerror
     };
 
     ws.onclose = () => {
-      if (callStatus !== 'idle') {
-        setCallStatus('idle');
-      }
-      // Cleanup
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        try {
-          mediaRecorderRef.current.stop();
-        } catch {
-          // ignore
-        }
-      }
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop());
-        streamRef.current = null;
+      clearTimeout(connectionTimeout);
+      // Clean up media resources
+      cleanupMedia();
+      wsRef.current = null;
+
+      // Only reset to idle if user didn't manually end (endCall handles its own transition)
+      if (!isEndingRef.current && callStatusRef.current !== 'idle') {
+        updateCallStatus('idle');
       }
     };
-  }, [callStatus, playAudioChunk]);
+  }, [updateCallStatus, cleanupMedia, playAudioChunk]);
 
   const endCall = useCallback(() => {
-    setCallStatus('ending');
+    isEndingRef.current = true;
+    updateCallStatus('ending');
 
-    // Stop MediaRecorder
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-      try {
-        mediaRecorderRef.current.stop();
-      } catch {
-        // ignore
-      }
-    }
-    mediaRecorderRef.current = null;
-
-    // Stop microphone tracks
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-
-    // Close WebSocket
+    // Close WebSocket first (triggers onclose which cleans media)
     if (wsRef.current) {
       if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
         wsRef.current.close();
@@ -537,16 +582,14 @@ export default function Home() {
       wsRef.current = null;
     }
 
-    // Close AudioContext
-    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-      audioContextRef.current.close().catch(() => {});
-      audioContextRef.current = null;
-    }
+    // Also clean up media directly for immediate feedback
+    cleanupMedia();
 
     setTimeout(() => {
-      setCallStatus('idle');
+      updateCallStatus('idle');
+      isEndingRef.current = false;
     }, 1500);
-  }, []);
+  }, [updateCallStatus, cleanupMedia]);
 
   const toggleMute = useCallback(() => {
     if (streamRef.current) {
