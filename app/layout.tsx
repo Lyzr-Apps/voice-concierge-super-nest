@@ -6,8 +6,8 @@ import { IframeLoggerInit } from '@/components/IframeLoggerInit'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Next.js App',
-  description: 'Built with Next.js, React, and Tailwind CSS',
+  title: 'Grand Heritage Hotel - Personal Concierge',
+  description: 'Your personal voice-powered hotel concierge for seamless booking experiences at Grand Heritage Hotel.',
 }
 
 export default function RootLayout({

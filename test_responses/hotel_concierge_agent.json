@@ -1,0 +1,18 @@
+{
+  "agent_name": "Hotel Concierge Agent",
+  "agent_id": "698a2ce42cb03d3e1f995f02",
+  "agent_type": "voice",
+  "voice_config": {
+    "initiator": "human",
+    "message": "",
+    "language": "English",
+    "voice": "sage"
+  },
+  "note": "Voice agent - uses WebSocket audio flow, not callAIAgent. No text response testing applicable.",
+  "test_status": "skipped_voice_agent",
+  "field_types": {
+    "voice_mode": "inbound",
+    "interaction": "real-time WebSocket audio",
+    "agent_id": "string (24-char hex)"
+  }
+}

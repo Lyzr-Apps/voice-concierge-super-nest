@@ -1,0 +1,54 @@
+{
+  "workflow_id": "hotel_concierge_voice_workflow",
+  "name": "Hotel Concierge Voice Agent",
+  "description": "A voice-based hotel concierge agent that handles inbound calls from guests to collect booking information and provide verbal confirmations.",
+  "nodes": [
+    {
+      "id": "input_node",
+      "type": "Input",
+      "label": "Voice Call Initiation",
+      "nodeCategory": "input"
+    },
+    {
+      "id": "hotel_concierge_agent",
+      "type": "Agent",
+      "label": "Hotel Concierge Agent",
+      "nodeCategory": "agent",
+      "agent_id": "698a2ce42cb03d3e1f995f02"
+    },
+    {
+      "id": "output_node",
+      "type": "Output",
+      "label": "Call Response",
+      "nodeCategory": "end"
+    }
+  ],
+  "edges": [
+    {
+      "source": "input_node",
+      "target": "hotel_concierge_agent"
+    },
+    {
+      "source": "hotel_concierge_agent",
+      "target": "output_node"
+    }
+  ],
+  "agents": [
+    {
+      "agent_id": "698a2ce42cb03d3e1f995f02",
+      "name": "Hotel Concierge Agent",
+      "type": "voice",
+      "role": "Professional Hotel Concierge and Booking Manager",
+      "provider": "openai",
+      "model": "gpt-4.1",
+      "temperature": 0.6,
+      "top_p": 0.95,
+      "voice_config": {
+        "initiator": "human",
+        "message": "",
+        "language": "English",
+        "voice": "sage"
+      }
+    }
+  ]
+}

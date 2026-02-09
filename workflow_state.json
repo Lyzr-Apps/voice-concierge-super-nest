@@ -1,0 +1,23 @@
+{
+  "agents": [
+    {
+      "agent_id": "698a2ce42cb03d3e1f995f02",
+      "agent_name": "Hotel Concierge Agent",
+      "agent_type": "voice",
+      "provider_id": "openai",
+      "model": "gpt-4.1",
+      "temperature": 0.6,
+      "top_p": 0.95,
+      "voice_config": {
+        "initiator": "human",
+        "message": "",
+        "language": "English",
+        "voice": "sage"
+      },
+      "created_at": "2026-02-09"
+    }
+  ],
+  "workflow_id": "hotel_concierge_voice_workflow",
+  "status": "active",
+  "total_agents": 1
+}
